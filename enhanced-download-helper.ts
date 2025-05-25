@@ -32,13 +32,18 @@ export class EnhancedDownloadHelper extends DownloadHelper {
 		await utils.embedScript('https://unpkg.com/@zip.js/zip.js/index.js');
 		await utils.embedScript('https://cdn.jsdelivr.net/npm/streamsaver@2.0.6/StreamSaver.js');
 
+		// zip.jsライブラリが読み込まれているかチェック
+		if (!(window as any).zip) {
+			throw new Error('zip.jsライブラリが正しく読み込まれていません');
+		}
+
 		const encodedId = utils.encodeFileName(downloadObj.id);
 
 		// StreamSaver.jsでダウンロードストリーム作成
 		const fileStream = (window as any).streamSaver.createWriteStream(`${encodedId}.zip`);
 
 		// zip.jsのZipWriterを作成 (WritableStreamに直接書き込み)
-		const { ZipWriter, TextReader } = (window as any);
+		const { ZipWriter, BlobReader } = (window as any).zip;
 		const zipWriter = new ZipWriter(fileStream, {
 			// Zip64を強制有効化 (4GB+対応)
 			zip64: true,
@@ -55,7 +60,8 @@ export class EnhancedDownloadHelper extends DownloadHelper {
 			log(`@${downloadObj.id} 投稿:${downloadObj.postCount} ファイル:${downloadObj.fileCount}`);
 
 			// ルートHTML追加
-			await zipWriter.add('index.html', new TextReader((this as any).createRootHtmlFromPosts(downloadObj)));
+			const rootHtmlBlob = new Blob([(this as any).createRootHtmlFromPosts(downloadObj)], { type: 'text/html' });
+			await zipWriter.add('index.html', new BlobReader(rootHtmlBlob));
 
 			// 各投稿を処理
 			let postCount = 0;
@@ -64,15 +70,18 @@ export class EnhancedDownloadHelper extends DownloadHelper {
 
 				// 投稿情報ファイル
 				const informationFile = utils.createInformationFile(post.informationText);
+				const infoContent = Array.isArray(informationFile.content) ? informationFile.content.join('') : informationFile.content;
+				const infoBlob = new Blob([infoContent], { type: 'text/plain' });
 				await zipWriter.add(
 					`${post.encodedName}/${utils.encodeFileName(informationFile.name)}`,
-					new TextReader(Array.isArray(informationFile.content) ? informationFile.content.join('') : informationFile.content),
+					new BlobReader(infoBlob),
 				);
 
 				// 投稿HTML
+				const postHtmlBlob = new Blob([(this as any).createHtmlFromBody(post.originalName, post.htmlText)], { type: 'text/html' });
 				await zipWriter.add(
 					`${post.encodedName}/index.html`,
-					new TextReader((this as any).createHtmlFromBody(post.originalName, post.htmlText)),
+					new BlobReader(postHtmlBlob),
 				);
 
 				// カバー画像
