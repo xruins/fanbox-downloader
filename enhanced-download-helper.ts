@@ -5,6 +5,10 @@ import { DownloadHelper, DownloadUtils } from 'download-helper/download-helper';
  * @zip.js/zip.jsを使用して4GB以上のZIPファイル作成をサポート
  */
 export class EnhancedDownloadHelper extends DownloadHelper {
+	constructor(utils: DownloadUtils) {
+		super(utils);
+	}
+
 	/**
 	 * Zip64対応のZIPダウンロード
 	 * @param downloadObj ダウンロード対象オブジェクト
@@ -18,11 +22,11 @@ export class EnhancedDownloadHelper extends DownloadHelper {
 		log: (s: string) => void,
 		remainTime: (r: string) => void,
 	) {
-		if (!this.isDownloadJsonObj(downloadObj)) {
+		if (!(this as any).isDownloadJsonObj(downloadObj)) {
 			throw new Error('ダウンロード対象オブジェクトの型が不正');
 		}
 
-		const utils = this['utils'] as DownloadUtils;
+		const utils = (this as any).utils as DownloadUtils;
 
 		// 外部ライブラリの読み込み
 		await utils.embedScript('https://unpkg.com/@zip.js/zip.js/index.js');
@@ -51,7 +55,7 @@ export class EnhancedDownloadHelper extends DownloadHelper {
 			log(`@${downloadObj.id} 投稿:${downloadObj.postCount} ファイル:${downloadObj.fileCount}`);
 
 			// ルートHTML追加
-			await zipWriter.add('index.html', new TextReader(this['createRootHtmlFromPosts'](downloadObj)));
+			await zipWriter.add('index.html', new TextReader((this as any).createRootHtmlFromPosts(downloadObj)));
 
 			// 各投稿を処理
 			let postCount = 0;
@@ -68,7 +72,7 @@ export class EnhancedDownloadHelper extends DownloadHelper {
 				// 投稿HTML
 				await zipWriter.add(
 					`${post.encodedName}/index.html`,
-					new TextReader(this['createHtmlFromBody'](post.originalName, post.htmlText)),
+					new TextReader((this as any).createHtmlFromBody(post.originalName, post.htmlText)),
 				);
 
 				// カバー画像
@@ -136,7 +140,7 @@ export class EnhancedDownloadHelper extends DownloadHelper {
 	 */
 	async createEnhancedDownloadUI(title: string) {
 		// 基本のUIを作成
-		await super.createDownloadUI(title);
+		await this.createDownloadUI(title);
 
 		// ボタンのクリックイベントを上書きしてZip64対応版を使用
 		const button = document.querySelector('.btn-labeled') as HTMLButtonElement;
