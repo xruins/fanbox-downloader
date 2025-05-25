@@ -154,28 +154,37 @@ class CorsCompatibleEnhancedDownloadHelper extends EnhancedDownloadHelper {
 		// 外部ライブラリの読み込み（CORS対応）
 		log('外部ライブラリを読み込み中...');
 		
-		// zip.jsの読み込み
-		try {
-			await utils.embedScript('https://unpkg.com/@zip.js/zip.js/index.js');
-			log('zip.js読み込み試行中...');
-			
-			// zip.jsライブラリの読み込みを待機
-			await waitForLibrary(() => !!(window as any).zip);
-			log('zip.js読み込み完了');
-		} catch (error) {
-			log('zip.js読み込み失敗、代替手段を試行中...');
+		// zip.jsの読み込み（複数CDNでフォールバック）
+		const zipjsCdns = [
+			'https://unpkg.com/@zip.js/zip.js/index.js',
+			'https://cdn.jsdelivr.net/npm/@zip.js/zip.js/dist/zip.min.js',
+			'https://cdn.jsdelivr.net/npm/@zip.js/zip.js@2.7.52/dist/zip.min.js'
+		];
+
+		let zipLoaded = false;
+		for (let i = 0; i < zipjsCdns.length; i++) {
+			const cdnUrl = zipjsCdns[i];
 			try {
-				// 代替CDNを試行
-				await utils.embedScript('https://cdn.jsdelivr.net/npm/@zip.js/zip.js@2.7.52/index.js');
+				log(`zip.js読み込み試行中... (CDN ${i + 1}/${zipjsCdns.length})`);
+				await utils.embedScript(cdnUrl);
+				
+				// zip.jsライブラリの読み込みを待機
 				await waitForLibrary(() => !!(window as any).zip);
-				log('zip.js読み込み完了（代替CDN）');
-			} catch (error2) {
-				log('全てのCDNで失敗、最後の手段を試行中...');
-				// 最後の手段として別のCDNを試行
-				await utils.embedScript('https://cdnjs.cloudflare.com/ajax/libs/zip.js/2.7.52/zip.min.js');
-				await waitForLibrary(() => !!(window as any).zip);
-				log('zip.js読み込み完了（Cloudflare CDN）');
+				zipLoaded = true;
+				log(`zip.js読み込み完了 (CDN: ${cdnUrl})`);
+				break;
+			} catch (error) {
+				console.warn(`CDN ${i + 1} (${cdnUrl}) での読み込み失敗:`, error);
+				log(`CDN ${i + 1} での読み込み失敗、次のCDNを試行中...`);
+				
+				if (i === zipjsCdns.length - 1) {
+					throw new Error('全てのCDNでzip.jsの読み込みに失敗しました');
+				}
 			}
+		}
+
+		if (!zipLoaded) {
+			throw new Error('zip.jsライブラリの読み込みに失敗しました');
 		}
 
 		// StreamSaver.jsの読み込み
