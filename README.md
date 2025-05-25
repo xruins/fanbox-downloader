@@ -29,16 +29,14 @@ javascript:import("https://furubarug.github.io/fanbox-downloader/fanbox-download
 従来版では4GBの制限がありましたが、新版では[@zip.js/zip.js](https://github.com/gildas-lormeau/zip.js)を使用することで：
 
 - ✅ **4GB以上のZIPファイル作成**が可能
-- ✅ **AES-256暗号化**対応（オプション）
 - ✅ **ストリーミング処理**でメモリ使用量を削減
 - ✅ **圧縮機能**でファイルサイズ削減
 - ✅ **フォールバック機能**で従来版との互換性
 
 ### 注意事項
 
-- Windows標準のZIP機能では、AES暗号化されたZIPファイルは開けません
-- 7-Zip、WinZip等の対応ソフトウェアが必要です
 - 従来版で問題が発生した場合、自動的にフォールバックします
+- 大容量ファイル処理時はブラウザのメモリ使用量に注意してください
 
 ## 📋 既知の問題
 
