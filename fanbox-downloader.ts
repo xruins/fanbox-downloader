@@ -1,4 +1,5 @@
-import { DownloadHelper, DownloadObject, DownloadUtils } from 'download-helper/download-helper';
+import { DownloadObject, DownloadUtils } from 'download-helper/download-helper';
+import { EnhancedDownloadHelper } from './enhanced-download-helper';
 
 /**
  * ダウンローダーの管理クラス
@@ -72,14 +73,15 @@ class DownloadManage {
 export async function main() {
 	let downloadObject: DownloadObject | undefined;
 	if (window.location.origin === 'https://downloads.fanbox.cc') {
-		await new DownloadHelper(DownloadManage.utils).createDownloadUI('fanbox-downloader');
+		// Zip64対応の拡張ダウンロードヘルパーを使用
+		await new EnhancedDownloadHelper(DownloadManage.utils).createEnhancedDownloadUI('fanbox-downloader (Zip64対応)');
 		return;
 	} else if (window.location.origin === 'https://www.fanbox.cc') {
 		const creatorId = window.location.href.match(/fanbox.cc\/@([^\/]*)/)?.[1];
 		const postId = window.location.href.match(/fanbox.cc\/@.*\/posts\/(\d*)/)?.[1];
 		downloadObject = await searchBy(creatorId, postId);
-	} else if (window.location.href.match(/^https:\/\/(.*)\.fanbox\.cc\//)) {
-		const creatorId = window.location.href.match(/^https:\/\/(.*)\.fanbox\.cc\//)?.[1];
+	} else if (window.location.href.match(/^https:\/\/(.*).fanbox.cc\//)) {
+		const creatorId = window.location.href.match(/^https:\/\/(.*).fanbox.cc\//)?.[1];
 		const postId = window.location.href.match(/.*\.fanbox\.cc\/posts\/(\d*)/)?.[1];
 		downloadObject = await searchBy(creatorId, postId);
 	} else {
@@ -90,7 +92,7 @@ export async function main() {
 	const json = downloadObject.stringify();
 	console.log(json);
 	const jsonCopied = () => {
-		alert('jsonをコピーしました。downloads.fanbox.ccで実行して貼り付けてね');
+		alert('jsonをコピーしました。downloads.fanbox.ccで実行して貼り付けてね (Zip64対応版)');
 		if (confirm('downloads.fanbox.ccに遷移する？')) {
 			document.location.href = 'https://downloads.fanbox.cc';
 		}
