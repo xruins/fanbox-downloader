@@ -22,7 +22,7 @@ export class EnhancedDownloadHelper extends DownloadHelper {
 			throw new Error('ダウンロード対象オブジェクトの型が不正');
 		}
 
-		const utils = this.utils;
+		const utils = this['utils'] as DownloadUtils;
 
 		// 外部ライブラリの読み込み
 		await utils.embedScript('https://unpkg.com/@zip.js/zip.js/index.js');
@@ -51,7 +51,7 @@ export class EnhancedDownloadHelper extends DownloadHelper {
 			log(`@${downloadObj.id} 投稿:${downloadObj.postCount} ファイル:${downloadObj.fileCount}`);
 
 			// ルートHTML追加
-			await zipWriter.add('index.html', new TextReader(this.createRootHtmlFromPosts(downloadObj)));
+			await zipWriter.add('index.html', new TextReader(this['createRootHtmlFromPosts'](downloadObj)));
 
 			// 各投稿を処理
 			let postCount = 0;
@@ -68,7 +68,7 @@ export class EnhancedDownloadHelper extends DownloadHelper {
 				// 投稿HTML
 				await zipWriter.add(
 					`${post.encodedName}/index.html`,
-					new TextReader(this.createHtmlFromBody(post.originalName, post.htmlText)),
+					new TextReader(this['createHtmlFromBody'](post.originalName, post.htmlText)),
 				);
 
 				// カバー画像
@@ -178,7 +178,7 @@ export class EnhancedDownloadHelper extends DownloadHelper {
 					// フォールバック: 元のdownloadZipを試行
 					try {
 						textLog('標準版で再試行中...');
-						await super.downloadZip(JSON.parse(input.value), setProgress, textLog, setRemainTime);
+						await (this as any).downloadZip(JSON.parse(input.value), setProgress, textLog, setRemainTime);
 					} catch (e2) {
 						textLog('標準版も失敗しました');
 						console.error(e2);
