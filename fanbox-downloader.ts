@@ -2,11 +2,53 @@ import { DownloadObject, DownloadUtils } from 'download-helper/download-helper';
 import { EnhancedDownloadHelper } from './enhanced-download-helper';
 
 /**
+ * CORS回避のためのスクリプト注入
+ */
+function injectScriptFromDataURL(code: string): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const blob = new Blob([code], { type: 'application/javascript' });
+		const url = URL.createObjectURL(blob);
+		const script = document.createElement('script');
+		script.src = url;
+		script.onload = () => {
+			URL.revokeObjectURL(url);
+			resolve();
+		};
+		script.onerror = (e) => {
+			URL.revokeObjectURL(url);
+			reject(e);
+		};
+		document.head.appendChild(script);
+	});
+}
+
+/**
  * ダウンローダーの管理クラス
  */
 class DownloadManage {
 	/** ダウンロード用ユーティリティ 何かあれば適当にオーバライドする */
-	public static readonly utils = new DownloadUtils();
+	public static readonly utils = new (class extends DownloadUtils {
+		/**
+		 * CORS対応のスクリプト埋め込み
+		 */
+		async embedScript(url: string): Promise<void> {
+			try {
+				// 通常のスクリプト読み込みを試行
+				await super.embedScript(url);
+			} catch (error) {
+				console.warn(`CORS制限によりスクリプト読み込み失敗、フェッチで再試行: ${url}`);
+				// CORSエラーの場合、fetchでコードを取得してBlobURLで注入
+				try {
+					const response = await fetch(url);
+					const code = await response.text();
+					await injectScriptFromDataURL(code);
+				} catch (fetchError) {
+					console.error(`スクリプト読み込み完全に失敗: ${url}`, fetchError);
+					throw fetchError;
+				}
+			}
+		}
+	})();
 
 	/** 投稿情報の出力をJSONにする（基本true, txtにする場合はfalseに変える）*/
 	public static readonly isExportJson = true;
@@ -68,13 +110,159 @@ class DownloadManage {
 }
 
 /**
+ * CORS回避対応のEnhancedDownloadHelper
+ */
+class CorsCompatibleEnhancedDownloadHelper extends EnhancedDownloadHelper {
+	constructor(utils: DownloadUtils) {
+		super(utils);
+	}
+
+	/**
+	 * CORS対応のZip64ダウンロード
+	 */
+	async downloadZipWithZip64(
+		downloadObj: any,
+		progress: (n: number) => void,
+		log: (s: string) => void,
+		remainTime: (r: string) => void,
+	) {
+		if (!(this as any).isDownloadJsonObj(downloadObj)) {
+			throw new Error('ダウンロード対象オブジェクトの型が不正');
+		}
+
+		const utils = (this as any).utils as DownloadUtils;
+
+		// 外部ライブラリの読み込み（CORS対応）
+		log('外部ライブラリを読み込み中...');
+		try {
+			await utils.embedScript('https://unpkg.com/@zip.js/zip.js/index.js');
+			log('zip.js読み込み完了');
+		} catch (error) {
+			log('zip.js読み込み失敗、代替手段を試行中...');
+			// 代替CDNを試行
+			await utils.embedScript('https://cdn.jsdelivr.net/npm/@zip.js/zip.js/index.js');
+			log('zip.js読み込み完了（代替CDN）');
+		}
+
+		try {
+			await utils.embedScript('https://cdn.jsdelivr.net/npm/streamsaver@2.0.6/StreamSaver.js');
+			log('StreamSaver.js読み込み完了');
+		} catch (error) {
+			log('StreamSaver.js読み込み失敗');
+			throw new Error('StreamSaver.jsの読み込みに失敗しました');
+		}
+
+		const encodedId = utils.encodeFileName(downloadObj.id);
+
+		// StreamSaver.jsでダウンロードストリーム作成
+		const fileStream = (window as any).streamSaver.createWriteStream(`${encodedId}.zip`);
+
+		// zip.jsのZipWriterを作成 (WritableStreamに直接書き込み)
+		const { ZipWriter, TextReader } = (window as any);
+		const zipWriter = new ZipWriter(fileStream, {
+			// Zip64を強制有効化 (4GB+対応)
+			zip64: true,
+			// 圧縮レベル設定 (0-9, 0=無圧縮, 9=最高圧縮)
+			level: 6,
+			// ストリーミング最適化
+			bufferedWrite: false,
+		});
+
+		try {
+			const startTime = Math.floor(Date.now() / 1000);
+			let count = 0;
+
+			log(`@${downloadObj.id} 投稿:${downloadObj.postCount} ファイル:${downloadObj.fileCount}`);
+
+			// ルートHTML追加
+			await zipWriter.add('index.html', new TextReader((this as any).createRootHtmlFromPosts(downloadObj)));
+
+			// 各投稿を処理
+			let postCount = 0;
+			for (const post of downloadObj.posts) {
+				log(`${post.originalName} (${++postCount}/${downloadObj.postCount})`);
+
+				// 投稿情報ファイル
+				const informationFile = utils.createInformationFile(post.informationText);
+				await zipWriter.add(
+					`${post.encodedName}/${utils.encodeFileName(informationFile.name)}`,
+					new TextReader(Array.isArray(informationFile.content) ? informationFile.content.join('') : informationFile.content),
+				);
+
+				// 投稿HTML
+				await zipWriter.add(
+					`${post.encodedName}/index.html`,
+					new TextReader((this as any).createHtmlFromBody(post.originalName, post.htmlText)),
+				);
+
+				// カバー画像
+				if (post.cover) {
+					log(`download ${post.cover.name}`);
+					try {
+						const response = await fetch(post.cover.url);
+						if (response.ok && response.body) {
+							// ReadableStreamを直接使用 (メモリ効率が良い)
+							await zipWriter.add(`${post.encodedName}/${post.cover.name}`, response.body);
+						}
+					} catch (error) {
+						console.error(`カバー画像のダウンロードに失敗: ${post.cover.name}`, error);
+						log(`カバー画像のダウンロードに失敗: ${post.cover.name}`);
+					}
+				}
+
+				// 各ファイル処理
+				let fileCount = 0;
+				for (const file of post.files) {
+					log(`download ${file.encodedName} (${++fileCount}/${post.files.length})`);
+
+					try {
+						const response = await fetch(file.url);
+						if (response.ok && response.body) {
+							// ストリーミング追加 (メモリ使用量を抑制)
+							await zipWriter.add(`${post.encodedName}/${file.encodedName}`, response.body);
+						} else {
+							throw new Error(`HTTP ${response.status}`);
+						}
+					} catch (error) {
+						console.error(`${file.encodedName}(${file.url})のダウンロードに失敗:`, error);
+						log(`${file.encodedName}のダウンロードに失敗`);
+					}
+
+					count++;
+
+					// 進捗更新
+					setTimeout(() => {
+						const remain = Math.floor(
+							(Math.abs(Math.floor(Date.now() / 1000) - startTime) * (downloadObj.fileCount - count)) / count,
+						);
+						const h = Math.floor(remain / (60 * 60));
+						const m = Math.ceil((remain - 60 * 60 * h) / 60);
+						remainTime(`${h}:${('00' + m).slice(-2)}`);
+						progress(Math.floor((count * 100) / downloadObj.fileCount));
+					}, 0);
+
+					await utils.sleep(100);
+				}
+			}
+
+			// ZIPファイルを完成
+			await zipWriter.close();
+			log('ZIPファイル作成完了 (Zip64対応)');
+		} catch (error) {
+			console.error('ZIP作成エラー:', error);
+			throw error;
+		}
+	}
+}
+
+/**
  * メイン
  */
 export async function main() {
 	let downloadObject: DownloadObject | undefined;
 	if (window.location.origin === 'https://downloads.fanbox.cc') {
-		// Zip64対応の拡張ダウンロードヘルパーを使用
-		const enhancedHelper = new EnhancedDownloadHelper(DownloadManage.utils);
+		// Zip64対応の拡張ダウンロードヘルパーを使用（CORS対応）
+		const enhancedHelper = new CorsCompatibleEnhancedDownloadHelper(DownloadManage.utils);
 		await enhancedHelper.createEnhancedDownloadUI('fanbox-downloader (Zip64対応)');
 		return;
 	} else if (window.location.origin === 'https://www.fanbox.cc') {
