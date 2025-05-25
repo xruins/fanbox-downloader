@@ -134,13 +134,13 @@ async function searchBy(
 		`https://api.fanbox.cc/plan.listCreator?creatorId=${creatorId}`,
 	).body;
 	const feeMapper = new Map<number, string>();
-	plans?.forEach((plan) => feeMapper.set(plan.fee, plan.title));
+	plans?.forEach((plan: any) => feeMapper.set(plan.fee, plan.title));
 	const downloadSettings = new DownloadManage(creatorId, feeMapper);
 	downloadSettings.downloadObject.setUrl(`https://www.fanbox.cc/@${creatorId}`);
 	const definedTags =
 		DownloadManage.utils
 			.httpGetAs<Tags>(`https://api.fanbox.cc/tag.getFeatured?creatorId=${creatorId}`)
-			.body?.map((tag) => tag.tag) ?? [];
+			.body?.map((tag: any) => tag.tag) ?? [];
 	downloadSettings.addTags(...definedTags);
 	if (postId) addByPostInfo(downloadSettings, getPostInfoById(postId));
 	else await getItemsById(downloadSettings);
@@ -235,7 +235,7 @@ function addByPostInfo(downloadManage: DownloadManage, postInfo: PostInfo | unde
 	let parsedText: string;
 	switch (postInfo.type) {
 		case 'image': {
-			const images = postInfo.body.images.map((it) =>
+			const images = postInfo.body.images.map((it: any) =>
 				postObject.addFile(postName, it.extension, it.originalUrl),
 			);
 			const imageTags = images.map((it) => postObject.getImageLinkTag(it)).join('<br>\n');
@@ -248,7 +248,7 @@ function addByPostInfo(downloadManage: DownloadManage, postInfo: PostInfo | unde
 			break;
 		}
 		case 'file': {
-			const files = postInfo.body.files.map((it) =>
+			const files = postInfo.body.files.map((it: any) =>
 				postObject.addFile(it.name, it.extension, it.url),
 			);
 			const fileTags = files.map((it) => postObject.getAutoAssignedLinkTag(it)).join('<br>\n');
@@ -261,10 +261,10 @@ function addByPostInfo(downloadManage: DownloadManage, postInfo: PostInfo | unde
 			break;
 		}
 		case 'article': {
-			const images = convertImageMap(postInfo.body.imageMap, postInfo.body.blocks).map((it) =>
+			const images = convertImageMap(postInfo.body.imageMap, postInfo.body.blocks).map((it: any) =>
 				postObject.addFile(postName, it.extension, it.originalUrl),
 			);
-			const files = convertFileMap(postInfo.body.fileMap, postInfo.body.blocks).map((it) =>
+			const files = convertFileMap(postInfo.body.fileMap, postInfo.body.blocks).map((it: any) =>
 				postObject.addFile(it.name, it.extension, it.url),
 			);
 			const embeds = convertEmbedMap(postInfo.body.embedMap, postInfo.body.blocks);
@@ -274,7 +274,7 @@ function addByPostInfo(downloadManage: DownloadManage, postInfo: PostInfo | unde
 				cntEmbed = 0,
 				cntUrlEmbed = 0;
 			const body = postInfo.body.blocks
-				.map((it) => {
+				.map((it: any) => {
 					switch (it.type) {
 						case 'p':
 							return `<span>${it.text}</span>`;
@@ -314,8 +314,8 @@ function addByPostInfo(downloadManage: DownloadManage, postInfo: PostInfo | unde
 			postObject.setHtml(header + body);
 			parsedText =
 				postInfo.body.blocks
-					.filter((it): it is TextBlock => it.type === 'p' || it.type === 'header')
-					.map((it) => it.text)
+					.filter((it: any): it is TextBlock => it.type === 'p' || it.type === 'header')
+					.map((it: any) => it.text)
 					.join('\n') + '\n';
 			break;
 		}
