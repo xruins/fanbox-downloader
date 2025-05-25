@@ -140,7 +140,7 @@ export class EnhancedDownloadHelper extends DownloadHelper {
 	 */
 	async createEnhancedDownloadUI(title: string) {
 		// 基本のUIを作成
-		await this.createDownloadUI(title);
+		await (this as any).createDownloadUI(title);
 
 		// ボタンのクリックイベントを上書きしてZip64対応版を使用
 		const button = document.querySelector('.btn-labeled') as HTMLButtonElement;
