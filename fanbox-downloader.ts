@@ -1,73 +1,15 @@
 import { DownloadObject, DownloadUtils } from 'download-helper/download-helper';
 import { EnhancedDownloadHelper } from './enhanced-download-helper';
-
-/**
- * CORS回避のためのスクリプト注入
- */
-function injectScriptFromDataURL(code: string): Promise<void> {
-	return new Promise((resolve, reject) => {
-		const blob = new Blob([code], { type: 'application/javascript' });
-		const url = URL.createObjectURL(blob);
-		const script = document.createElement('script');
-		script.src = url;
-		script.onload = () => {
-			URL.revokeObjectURL(url);
-			resolve();
-		};
-		script.onerror = (e) => {
-			URL.revokeObjectURL(url);
-			reject(e);
-		};
-		document.head.appendChild(script);
-	});
-}
-
-/**
- * スクリプトの読み込みを待機する関数
- */
-function waitForLibrary(checkFn: () => boolean, timeout = 10000): Promise<void> {
-	return new Promise((resolve, reject) => {
-		const startTime = Date.now();
-		const check = () => {
-			if (checkFn()) {
-				resolve();
-			} else if (Date.now() - startTime > timeout) {
-				reject(new Error('ライブラリの読み込みがタイムアウトしました'));
-			} else {
-				setTimeout(check, 100);
-			}
-		};
-		check();
-	});
-}
+// バンドル版: 外部ライブラリを直接import
+import * as zip from '@zip.js/zip.js';
+import streamSaver from 'streamsaver';
 
 /**
  * ダウンローダーの管理クラス
  */
 class DownloadManage {
 	/** ダウンロード用ユーティリティ 何かあれば適当にオーバライドする */
-	public static readonly utils = new (class extends DownloadUtils {
-		/**
-		 * CORS対応のスクリプト埋め込み
-		 */
-		async embedScript(url: string): Promise<void> {
-			try {
-				// 通常のスクリプト読み込みを試行
-				await super.embedScript(url);
-			} catch (error) {
-				console.warn(`CORS制限によりスクリプト読み込み失敗、フェッチで再試行: ${url}`);
-				// CORSエラーの場合、fetchでコードを取得してBlobURLで注入
-				try {
-					const response = await fetch(url);
-					const code = await response.text();
-					await injectScriptFromDataURL(code);
-				} catch (fetchError) {
-					console.error(`スクリプト読み込み完全に失敗: ${url}`, fetchError);
-					throw fetchError;
-				}
-			}
-		}
-	})();
+	public static readonly utils = new DownloadUtils();
 
 	/** 投稿情報の出力をJSONにする（基本true, txtにする場合はfalseに変える）*/
 	public static readonly isExportJson = true;
@@ -129,15 +71,15 @@ class DownloadManage {
 }
 
 /**
- * CORS回避対応のEnhancedDownloadHelper
+ * バンドル対応のEnhancedDownloadHelper
  */
-class CorsCompatibleEnhancedDownloadHelper extends EnhancedDownloadHelper {
+class BundledEnhancedDownloadHelper extends EnhancedDownloadHelper {
 	constructor(utils: DownloadUtils) {
 		super(utils);
 	}
 
 	/**
-	 * CORS対応のZip64ダウンロード
+	 * バンドル済みライブラリを使用したZip64ダウンロード
 	 */
 	async downloadZipWithZip64(
 		downloadObj: any,
@@ -151,68 +93,15 @@ class CorsCompatibleEnhancedDownloadHelper extends EnhancedDownloadHelper {
 
 		const utils = (this as any).utils as DownloadUtils;
 
-		// 外部ライブラリの読み込み（CORS対応）
-		log('外部ライブラリを読み込み中...');
-		
-		// zip.jsの読み込み（複数CDNでフォールバック）
-		const zipjsCdns = [
-			'https://unpkg.com/@zip.js/zip.js/index.js',
-			'https://cdn.jsdelivr.net/npm/@zip.js/zip.js/dist/zip.min.js',
-			'https://cdn.jsdelivr.net/npm/@zip.js/zip.js@2.7.52/dist/zip.min.js'
-		];
-
-		let zipLoaded = false;
-		for (let i = 0; i < zipjsCdns.length; i++) {
-			const cdnUrl = zipjsCdns[i];
-			try {
-				log(`zip.js読み込み試行中... (CDN ${i + 1}/${zipjsCdns.length})`);
-				await utils.embedScript(cdnUrl);
-				
-				// zip.jsライブラリの読み込みを待機
-				await waitForLibrary(() => !!(window as any).zip);
-				zipLoaded = true;
-				log(`zip.js読み込み完了 (CDN: ${cdnUrl})`);
-				break;
-			} catch (error) {
-				console.warn(`CDN ${i + 1} (${cdnUrl}) での読み込み失敗:`, error);
-				log(`CDN ${i + 1} での読み込み失敗、次のCDNを試行中...`);
-				
-				if (i === zipjsCdns.length - 1) {
-					throw new Error('全てのCDNでzip.jsの読み込みに失敗しました');
-				}
-			}
-		}
-
-		if (!zipLoaded) {
-			throw new Error('zip.jsライブラリの読み込みに失敗しました');
-		}
-
-		// StreamSaver.jsの読み込み
-		try {
-			await utils.embedScript('https://cdn.jsdelivr.net/npm/streamsaver@2.0.6/StreamSaver.js');
-			await waitForLibrary(() => !!(window as any).streamSaver);
-			log('StreamSaver.js読み込み完了');
-		} catch (error) {
-			log('StreamSaver.js読み込み失敗');
-			throw new Error('StreamSaver.jsの読み込みに失敗しました');
-		}
-
-		// 最終的なライブラリチェック
-		if (!(window as any).zip) {
-			throw new Error('zip.jsライブラリが正しく読み込まれていません');
-		}
-
-		if (!(window as any).streamSaver) {
-			throw new Error('StreamSaverライブラリが正しく読み込まれていません');
-		}
+		log('バンドル済みライブラリを使用中 (Zip64対応)...');
 
 		const encodedId = utils.encodeFileName(downloadObj.id);
 
 		// StreamSaver.jsでダウンロードストリーム作成
-		const fileStream = (window as any).streamSaver.createWriteStream(`${encodedId}.zip`);
+		const fileStream = streamSaver.createWriteStream(`${encodedId}.zip`);
 
 		// zip.jsのZipWriterを作成 (WritableStreamに直接書き込み)
-		const { ZipWriter, BlobReader } = (window as any).zip;
+		const { ZipWriter, BlobReader } = zip;
 		const zipWriter = new ZipWriter(fileStream, {
 			// Zip64を強制有効化 (4GB+対応)
 			zip64: true,
@@ -305,7 +194,7 @@ class CorsCompatibleEnhancedDownloadHelper extends EnhancedDownloadHelper {
 
 			// ZIPファイルを完成
 			await zipWriter.close();
-			log('ZIPファイル作成完了 (Zip64対応)');
+			log('ZIPファイル作成完了 (Zip64対応・バンドル版)');
 		} catch (error) {
 			console.error('ZIP作成エラー:', error);
 			throw error;
@@ -319,9 +208,9 @@ class CorsCompatibleEnhancedDownloadHelper extends EnhancedDownloadHelper {
 export async function main() {
 	let downloadObject: DownloadObject | undefined;
 	if (window.location.origin === 'https://downloads.fanbox.cc') {
-		// Zip64対応の拡張ダウンロードヘルパーを使用（CORS対応）
-		const enhancedHelper = new CorsCompatibleEnhancedDownloadHelper(DownloadManage.utils);
-		await enhancedHelper.createEnhancedDownloadUI('fanbox-downloader (Zip64対応)');
+		// バンドル対応の拡張ダウンロードヘルパーを使用
+		const enhancedHelper = new BundledEnhancedDownloadHelper(DownloadManage.utils);
+		await enhancedHelper.createEnhancedDownloadUI('fanbox-downloader (Zip64対応・バンドル版)');
 		return;
 	} else if (window.location.origin === 'https://www.fanbox.cc') {
 		const creatorId = window.location.href.match(/fanbox.cc\/@([^\/]*)/)?.[1];
@@ -339,7 +228,7 @@ export async function main() {
 	const json = downloadObject.stringify();
 	console.log(json);
 	const jsonCopied = () => {
-		alert('jsonをコピーしました。downloads.fanbox.ccで実行して貼り付けてね (Zip64対応版)');
+		alert('jsonをコピーしました。downloads.fanbox.ccで実行して貼り付けてね (Zip64対応・バンドル版)');
 		if (confirm('downloads.fanbox.ccに遷移する？')) {
 			document.location.href = 'https://downloads.fanbox.cc';
 		}
