@@ -23,6 +23,25 @@ function injectScriptFromDataURL(code: string): Promise<void> {
 }
 
 /**
+ * スクリプトの読み込みを待機する関数
+ */
+function waitForLibrary(checkFn: () => boolean, timeout = 10000): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const startTime = Date.now();
+		const check = () => {
+			if (checkFn()) {
+				resolve();
+			} else if (Date.now() - startTime > timeout) {
+				reject(new Error('ライブラリの読み込みがタイムアウトしました'));
+			} else {
+				setTimeout(check, 100);
+			}
+		};
+		check();
+	});
+}
+
+/**
  * ダウンローダーの管理クラス
  */
 class DownloadManage {
@@ -134,27 +153,48 @@ class CorsCompatibleEnhancedDownloadHelper extends EnhancedDownloadHelper {
 
 		// 外部ライブラリの読み込み（CORS対応）
 		log('外部ライブラリを読み込み中...');
+		
+		// zip.jsの読み込み
 		try {
 			await utils.embedScript('https://unpkg.com/@zip.js/zip.js/index.js');
+			log('zip.js読み込み試行中...');
+			
+			// zip.jsライブラリの読み込みを待機
+			await waitForLibrary(() => !!(window as any).zip);
 			log('zip.js読み込み完了');
 		} catch (error) {
 			log('zip.js読み込み失敗、代替手段を試行中...');
-			// 代替CDNを試行
-			await utils.embedScript('https://cdn.jsdelivr.net/npm/@zip.js/zip.js/index.js');
-			log('zip.js読み込み完了（代替CDN）');
+			try {
+				// 代替CDNを試行
+				await utils.embedScript('https://cdn.jsdelivr.net/npm/@zip.js/zip.js@2.7.52/index.js');
+				await waitForLibrary(() => !!(window as any).zip);
+				log('zip.js読み込み完了（代替CDN）');
+			} catch (error2) {
+				log('全てのCDNで失敗、最後の手段を試行中...');
+				// 最後の手段として別のCDNを試行
+				await utils.embedScript('https://cdnjs.cloudflare.com/ajax/libs/zip.js/2.7.52/zip.min.js');
+				await waitForLibrary(() => !!(window as any).zip);
+				log('zip.js読み込み完了（Cloudflare CDN）');
+			}
 		}
 
+		// StreamSaver.jsの読み込み
 		try {
 			await utils.embedScript('https://cdn.jsdelivr.net/npm/streamsaver@2.0.6/StreamSaver.js');
+			await waitForLibrary(() => !!(window as any).streamSaver);
 			log('StreamSaver.js読み込み完了');
 		} catch (error) {
 			log('StreamSaver.js読み込み失敗');
 			throw new Error('StreamSaver.jsの読み込みに失敗しました');
 		}
 
-		// zip.jsライブラリが読み込まれているかチェック
+		// 最終的なライブラリチェック
 		if (!(window as any).zip) {
 			throw new Error('zip.jsライブラリが正しく読み込まれていません');
+		}
+
+		if (!(window as any).streamSaver) {
+			throw new Error('StreamSaverライブラリが正しく読み込まれていません');
 		}
 
 		const encodedId = utils.encodeFileName(downloadObj.id);
