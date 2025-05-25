@@ -42,9 +42,6 @@ export class EnhancedDownloadHelper extends DownloadHelper {
 			level: 6,
 			// ストリーミング最適化
 			bufferedWrite: false,
-			// AES-256暗号化（オプション）
-			// password: "your-password-here",
-			// encryptionStrength: 3,
 		});
 
 		try {
