@@ -74,7 +74,8 @@ export async function main() {
 	let downloadObject: DownloadObject | undefined;
 	if (window.location.origin === 'https://downloads.fanbox.cc') {
 		// Zip64対応の拡張ダウンロードヘルパーを使用
-		await new EnhancedDownloadHelper(DownloadManage.utils).createEnhancedDownloadUI('fanbox-downloader (Zip64対応)');
+		const enhancedHelper = new EnhancedDownloadHelper(DownloadManage.utils);
+		await enhancedHelper.createEnhancedDownloadUI('fanbox-downloader (Zip64対応)');
 		return;
 	} else if (window.location.origin === 'https://www.fanbox.cc') {
 		const creatorId = window.location.href.match(/fanbox.cc\/@([^\/]*)/)?.[1];
