@@ -1,7 +1,7 @@
 {
   "name": "fanbox-downloader",
   "version": "3.6.0",
-  "description": "pixiv FANBOXの投稿を投稿毎にフォルダ分け → ZIPとして一括ダウンロードするブックマークレット（Zip64対応）",
+  "description": "pixiv FANBOXの投稿を投稿毎にフォルダ分け → ZIPとして一括ダウンロードするブックマークレット",
   "scripts": {
     "build": "webpack",
     "build:dev": "webpack --mode development",
