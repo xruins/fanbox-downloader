@@ -188,7 +188,7 @@ class BundledEnhancedDownloadHelper extends EnhancedDownloadHelper {
 						progress(Math.floor((count * 100) / downloadObj.fileCount));
 					}, 0);
 
-					await utils.sleep(1000); //(100);
+					await utils.sleep(100);
 				}
 			}
 
@@ -339,7 +339,7 @@ async function getItemsById(downloadManage: DownloadManage) {
 	for (let i = 0; i < urls.length; i++) {
 		console.log(`${i + 1}回目`);
 		await addByPostListUrl(downloadManage, urls[i]);
-		await DownloadManage.utils.sleep(5000);
+		await DownloadManage.utils.sleep(30000);
 	}
 }
 
@@ -357,7 +357,7 @@ async function addByPostListUrl(downloadManage: DownloadManage, url: string): Pr
 				addByPostInfo(downloadManage, post);
 			} else if (!post.isRestricted) {
 				const remaining = Math.max(0, rateLimitedUntil - Date.now());
-				await DownloadManage.utils.sleep(Math.max(5000, remaining));
+				await DownloadManage.utils.sleep(Math.max(30000, remaining));
 				addByPostInfo(downloadManage, await getPostInfoById(post.id));
 			}
 		} else break;
