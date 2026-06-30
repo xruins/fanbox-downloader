@@ -253,18 +253,16 @@ export async function main() {
 	}
 }
 
-/**
- * 直近の 429 に基づいて次の API 呼び出しまで待つべき時刻 (ms)。
- * fetchApiWithRetry がリトライ成功後にセットし、呼び出し元が参照する。
- */
-let rateLimitedUntil = 0;
+const API_INTERVAL_MS = 30000;
+let lastApiCallTime = 0;
 
-/**
- * Retry-After ヘッダーを尊重しながら API を叩く。429 の場合は待機してリトライ。
- * リトライ成功後は rateLimitedUntil をセットし、呼び出し元が次の API 呼び出しで
- * 適切に待機できるようにする。
- */
 async function fetchApiWithRetry<T>(url: string): Promise<T> {
+	const elapsed = Date.now() - lastApiCallTime;
+	if (lastApiCallTime > 0 && elapsed < API_INTERVAL_MS) {
+		await DownloadManage.utils.sleep(API_INTERVAL_MS - elapsed);
+	}
+	lastApiCallTime = Date.now();
+
 	while (true) {
 		const response = await fetch(url, { credentials: 'include' });
 		if (response.status === 429) {
@@ -280,8 +278,7 @@ async function fetchApiWithRetry<T>(url: string): Promise<T> {
 			}
 			console.log(`429 Too Many Requests. ${waitMs}ms 後にリトライ...`);
 			await DownloadManage.utils.sleep(waitMs);
-			// リトライ成功後も同じ waitMs だけ間隔を空けるよう呼び出し元に伝える
-			rateLimitedUntil = Date.now() + waitMs;
+			lastApiCallTime = Date.now();
 			continue;
 		}
 		return response.json() as Promise<T>;
@@ -339,7 +336,6 @@ async function getItemsById(downloadManage: DownloadManage) {
 	for (let i = 0; i < urls.length; i++) {
 		console.log(`${i + 1}回目`);
 		await addByPostListUrl(downloadManage, urls[i]);
-		await DownloadManage.utils.sleep(30000);
 	}
 }
 
@@ -356,8 +352,6 @@ async function addByPostListUrl(downloadManage: DownloadManage, url: string): Pr
 			if (post.body) {
 				addByPostInfo(downloadManage, post);
 			} else if (!post.isRestricted) {
-				const remaining = Math.max(0, rateLimitedUntil - Date.now());
-				await DownloadManage.utils.sleep(Math.max(30000, remaining));
 				addByPostInfo(downloadManage, await getPostInfoById(post.id));
 			}
 		} else break;
