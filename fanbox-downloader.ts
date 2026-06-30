@@ -321,7 +321,7 @@ async function addByPostListUrl(downloadManage: DownloadManage, url: string): Pr
 			if (post.body) {
 				addByPostInfo(downloadManage, post);
 			} else if (!post.isRestricted) {
-				await DownloadManage.utils.sleep(100);
+				await DownloadManage.utils.sleep(5000);
 				addByPostInfo(downloadManage, getPostInfoById(post.id));
 			}
 		} else break;
