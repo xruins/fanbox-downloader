@@ -254,6 +254,31 @@ export async function main() {
 }
 
 /**
+ * Retry-After ヘッダーを尊重しながら API を叩く。429 の場合は待機してリトライ。
+ */
+async function fetchApiWithRetry<T>(url: string): Promise<T> {
+	while (true) {
+		const response = await fetch(url, { credentials: 'include' });
+		if (response.status === 429) {
+			const retryAfter = response.headers.get('Retry-After');
+			let waitMs: number;
+			if (retryAfter) {
+				const seconds = parseInt(retryAfter, 10);
+				waitMs = isNaN(seconds)
+					? Math.max(Date.parse(retryAfter) - Date.now(), 1000)
+					: seconds * 1000;
+			} else {
+				waitMs = 5000;
+			}
+			console.log(`429 Too Many Requests. ${waitMs}ms 後にリトライ...`);
+			await DownloadManage.utils.sleep(waitMs);
+			continue;
+		}
+		return response.json() as Promise<T>;
+	}
+}
+
+/**
  * 投稿情報を取得してまとめて返す
  * @param creatorId ユーザーID
  * @param postId 投稿ID
@@ -266,19 +291,19 @@ async function searchBy(
 		alert('しらないURL');
 		return;
 	}
-	const plans = DownloadManage.utils.httpGetAs<Plans>(
+	const plans = (await fetchApiWithRetry<Plans>(
 		`https://api.fanbox.cc/plan.listCreator?creatorId=${creatorId}`,
-	).body;
+	)).body;
 	const feeMapper = new Map<number, string>();
 	plans?.forEach((plan: any) => feeMapper.set(plan.fee, plan.title));
 	const downloadSettings = new DownloadManage(creatorId, feeMapper);
 	downloadSettings.downloadObject.setUrl(`https://www.fanbox.cc/@${creatorId}`);
 	const definedTags =
-		DownloadManage.utils
-			.httpGetAs<Tags>(`https://api.fanbox.cc/tag.getFeatured?creatorId=${creatorId}`)
-			.body?.map((tag: any) => tag.tag) ?? [];
+		(await fetchApiWithRetry<Tags>(
+			`https://api.fanbox.cc/tag.getFeatured?creatorId=${creatorId}`,
+		)).body?.map((tag: any) => tag.tag) ?? [];
 	downloadSettings.addTags(...definedTags);
-	if (postId) addByPostInfo(downloadSettings, getPostInfoById(postId));
+	if (postId) addByPostInfo(downloadSettings, await getPostInfoById(postId));
 	else await getItemsById(downloadSettings);
 	downloadSettings.applyTags();
 	return downloadSettings.downloadObject;
@@ -298,9 +323,9 @@ async function getItemsById(downloadManage: DownloadManage) {
 			downloadManage.setLimit(limit);
 		}
 	}
-	const urls = DownloadManage.utils.httpGetAs<{ body: string[] }>(
+	const urls = (await fetchApiWithRetry<{ body: string[] }>(
 		`https://api.fanbox.cc/post.paginateCreator?creatorId=${downloadManage.userId}`,
-	).body;
+	)).body;
 	for (let i = 0; i < urls.length; i++) {
 		console.log(`${i + 1}回目`);
 		await addByPostListUrl(downloadManage, urls[i]);
@@ -314,7 +339,7 @@ async function getItemsById(downloadManage: DownloadManage) {
  * @param url
  */
 async function addByPostListUrl(downloadManage: DownloadManage, url: string): Promise<void> {
-	const postList = DownloadManage.utils.httpGetAs<{ body: PostInfo[] }>(url).body;
+	const postList = (await fetchApiWithRetry<{ body: PostInfo[] }>(url)).body;
 	console.log(`投稿の数:${postList.length}`);
 	for (const post of postList) {
 		if (downloadManage.isLimitValid()) {
@@ -322,7 +347,7 @@ async function addByPostListUrl(downloadManage: DownloadManage, url: string): Pr
 				addByPostInfo(downloadManage, post);
 			} else if (!post.isRestricted) {
 				await DownloadManage.utils.sleep(5000);
-				addByPostInfo(downloadManage, getPostInfoById(post.id));
+				addByPostInfo(downloadManage, await getPostInfoById(post.id));
 			}
 		} else break;
 	}
@@ -332,10 +357,10 @@ async function addByPostListUrl(downloadManage: DownloadManage, url: string): Pr
  * 投稿IDからpostInfoを得る
  * @param postId 投稿ID
  */
-function getPostInfoById(postId: string): PostInfo | undefined {
-	return DownloadManage.utils.httpGetAs<{ body?: PostInfo }>(
+async function getPostInfoById(postId: string): Promise<PostInfo | undefined> {
+	return (await fetchApiWithRetry<{ body?: PostInfo }>(
 		`https://api.fanbox.cc/post.info?postId=${postId}`,
-	).body;
+	)).body;
 }
 
 /**
