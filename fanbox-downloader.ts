@@ -1,4 +1,8 @@
-import { DownloadHelper, DownloadObject, DownloadUtils } from 'download-helper/download-helper';
+import { DownloadObject, DownloadUtils } from 'download-helper/download-helper';
+import { EnhancedDownloadHelper } from './enhanced-download-helper';
+// バンドル版: 外部ライブラリを直接import
+import * as zip from '@zip.js/zip.js';
+import streamSaver from 'streamsaver';
 
 /**
  * ダウンローダーの管理クラス
@@ -67,12 +71,146 @@ class DownloadManage {
 }
 
 /**
+ * バンドル対応のEnhancedDownloadHelper
+ */
+class BundledEnhancedDownloadHelper extends EnhancedDownloadHelper {
+	constructor(utils: DownloadUtils) {
+		super(utils);
+	}
+
+	/**
+	 * バンドル済みライブラリを使用したZip64ダウンロード
+	 */
+	async downloadZipWithZip64(
+		downloadObj: any,
+		progress: (n: number) => void,
+		log: (s: string) => void,
+		remainTime: (r: string) => void,
+	) {
+		if (!(this as any).isDownloadJsonObj(downloadObj)) {
+			throw new Error('ダウンロード対象オブジェクトの型が不正');
+		}
+
+		const utils = (this as any).utils as DownloadUtils;
+
+		log('バンドル済みライブラリを使用中 (Zip64対応)...');
+
+		const encodedId = utils.encodeFileName(downloadObj.id);
+
+		// StreamSaver.jsでダウンロードストリーム作成
+		const fileStream = streamSaver.createWriteStream(`${encodedId}.zip`);
+
+		// zip.jsのZipWriterを作成 (WritableStreamに直接書き込み)
+		const { ZipWriter, BlobReader } = zip;
+		const zipWriter = new ZipWriter(fileStream, {
+			// Zip64を強制有効化 (4GB+対応)
+			zip64: true,
+			// 圧縮レベル設定 (0-9, 0=無圧縮, 9=最高圧縮)
+			level: 6,
+			// ストリーミング最適化
+			bufferedWrite: false,
+		});
+
+		try {
+			const startTime = Math.floor(Date.now() / 1000);
+			let count = 0;
+
+			log(`@${downloadObj.id} 投稿:${downloadObj.postCount} ファイル:${downloadObj.fileCount}`);
+
+			// ルートHTML追加
+			const rootHtmlBlob = new Blob([(this as any).createRootHtmlFromPosts(downloadObj)], { type: 'text/html' });
+			await zipWriter.add('index.html', new BlobReader(rootHtmlBlob));
+
+			// 各投稿を処理
+			let postCount = 0;
+			for (const post of downloadObj.posts) {
+				log(`${post.originalName} (${++postCount}/${downloadObj.postCount})`);
+
+				// 投稿情報ファイル
+				const informationFile = utils.createInformationFile(post.informationText);
+				const infoContent = Array.isArray(informationFile.content) ? informationFile.content.join('') : informationFile.content;
+				const infoBlob = new Blob([infoContent], { type: 'text/plain' });
+				await zipWriter.add(
+					`${post.encodedName}/${utils.encodeFileName(informationFile.name)}`,
+					new BlobReader(infoBlob),
+				);
+
+				// 投稿HTML
+				const postHtmlBlob = new Blob([(this as any).createHtmlFromBody(post.originalName, post.htmlText)], { type: 'text/html' });
+				await zipWriter.add(
+					`${post.encodedName}/index.html`,
+					new BlobReader(postHtmlBlob),
+				);
+
+				// カバー画像
+				if (post.cover) {
+					log(`download ${post.cover.name}`);
+					try {
+						const response = await fetch(post.cover.url);
+						if (response.ok && response.body) {
+							// ReadableStreamを直接使用 (メモリ効率が良い)
+							await zipWriter.add(`${post.encodedName}/${post.cover.name}`, response.body);
+						}
+					} catch (error) {
+						console.error(`カバー画像のダウンロードに失敗: ${post.cover.name}`, error);
+						log(`カバー画像のダウンロードに失敗: ${post.cover.name}`);
+					}
+				}
+
+				// 各ファイル処理
+				let fileCount = 0;
+				for (const file of post.files) {
+					log(`download ${file.encodedName} (${++fileCount}/${post.files.length})`);
+
+					try {
+						const response = await fetch(file.url);
+						if (response.ok && response.body) {
+							// ストリーミング追加 (メモリ使用量を抑制)
+							await zipWriter.add(`${post.encodedName}/${file.encodedName}`, response.body);
+						} else {
+							throw new Error(`HTTP ${response.status}`);
+						}
+					} catch (error) {
+						console.error(`${file.encodedName}(${file.url})のダウンロードに失敗:`, error);
+						log(`${file.encodedName}のダウンロードに失敗`);
+					}
+
+					count++;
+
+					// 進捗更新
+					setTimeout(() => {
+						const remain = Math.floor(
+							(Math.abs(Math.floor(Date.now() / 1000) - startTime) * (downloadObj.fileCount - count)) / count,
+						);
+						const h = Math.floor(remain / (60 * 60));
+						const m = Math.ceil((remain - 60 * 60 * h) / 60);
+						remainTime(`${h}:${('00' + m).slice(-2)}`);
+						progress(Math.floor((count * 100) / downloadObj.fileCount));
+					}, 0);
+
+					await utils.sleep(100);
+				}
+			}
+
+			// ZIPファイルを完成
+			await zipWriter.close();
+			log('ZIPファイル作成完了 (Zip64対応・バンドル版)');
+		} catch (error) {
+			console.error('ZIP作成エラー:', error);
+			throw error;
+		}
+	}
+}
+
+/**
  * メイン
  */
 export async function main() {
 	let downloadObject: DownloadObject | undefined;
 	if (window.location.origin === 'https://downloads.fanbox.cc') {
-		await new DownloadHelper(DownloadManage.utils).createDownloadUI('fanbox-downloader');
+		// バンドル対応の拡張ダウンロードヘルパーを使用
+		const enhancedHelper = new BundledEnhancedDownloadHelper(DownloadManage.utils);
+		await enhancedHelper.createEnhancedDownloadUI('fanbox-downloader (Zip64対応・バンドル版)');
 		return;
 	} else if (window.location.origin === 'https://www.fanbox.cc') {
 		const creatorId = window.location.href.match(/fanbox.cc\/@([^\/]*)/)?.[1];
@@ -90,7 +228,7 @@ export async function main() {
 	const json = downloadObject.stringify();
 	console.log(json);
 	const jsonCopied = () => {
-		alert('jsonをコピーしました。downloads.fanbox.ccで実行して貼り付けてね');
+		alert('jsonをコピーしました。downloads.fanbox.ccで実行して貼り付けてね (Zip64対応・バンドル版)');
 		if (confirm('downloads.fanbox.ccに遷移する？')) {
 			document.location.href = 'https://downloads.fanbox.cc';
 		}
@@ -115,6 +253,38 @@ export async function main() {
 	}
 }
 
+const API_INTERVAL_MS = 30000;
+let lastApiCallTime = 0;
+
+async function fetchApiWithRetry<T>(url: string): Promise<T> {
+	const elapsed = Date.now() - lastApiCallTime;
+	if (lastApiCallTime > 0 && elapsed < API_INTERVAL_MS) {
+		await DownloadManage.utils.sleep(API_INTERVAL_MS - elapsed);
+	}
+	lastApiCallTime = Date.now();
+
+	while (true) {
+		const response = await fetch(url, { credentials: 'include' });
+		if (response.status === 429) {
+			const retryAfter = response.headers.get('Retry-After');
+			let waitMs: number;
+			if (retryAfter) {
+				const seconds = parseInt(retryAfter, 10);
+				waitMs = isNaN(seconds)
+					? Math.max(Date.parse(retryAfter) - Date.now(), 5000)
+					: Math.max(seconds * 1000, 5000);
+			} else {
+				waitMs = 5000;
+			}
+			console.log(`429 Too Many Requests. ${waitMs}ms 後にリトライ...`);
+			await DownloadManage.utils.sleep(waitMs);
+			lastApiCallTime = Date.now();
+			continue;
+		}
+		return response.json() as Promise<T>;
+	}
+}
+
 /**
  * 投稿情報を取得してまとめて返す
  * @param creatorId ユーザーID
@@ -128,19 +298,19 @@ async function searchBy(
 		alert('しらないURL');
 		return;
 	}
-	const plans = DownloadManage.utils.httpGetAs<Plans>(
+	const plans = (await fetchApiWithRetry<Plans>(
 		`https://api.fanbox.cc/plan.listCreator?creatorId=${creatorId}`,
-	).body;
+	)).body;
 	const feeMapper = new Map<number, string>();
-	plans?.forEach((plan) => feeMapper.set(plan.fee, plan.title));
+	plans?.forEach((plan: any) => feeMapper.set(plan.fee, plan.title));
 	const downloadSettings = new DownloadManage(creatorId, feeMapper);
 	downloadSettings.downloadObject.setUrl(`https://www.fanbox.cc/@${creatorId}`);
 	const definedTags =
-		DownloadManage.utils
-			.httpGetAs<Tags>(`https://api.fanbox.cc/tag.getFeatured?creatorId=${creatorId}`)
-			.body?.map((tag) => tag.tag) ?? [];
+		(await fetchApiWithRetry<Tags>(
+			`https://api.fanbox.cc/tag.getFeatured?creatorId=${creatorId}`,
+		)).body?.map((tag: any) => tag.tag) ?? [];
 	downloadSettings.addTags(...definedTags);
-	if (postId) addByPostInfo(downloadSettings, getPostInfoById(postId));
+	if (postId) addByPostInfo(downloadSettings, await getPostInfoById(postId));
 	else await getItemsById(downloadSettings);
 	downloadSettings.applyTags();
 	return downloadSettings.downloadObject;
@@ -160,13 +330,12 @@ async function getItemsById(downloadManage: DownloadManage) {
 			downloadManage.setLimit(limit);
 		}
 	}
-	const urls = DownloadManage.utils.httpGetAs<{ body: string[] }>(
+	const urls = (await fetchApiWithRetry<{ body: string[] }>(
 		`https://api.fanbox.cc/post.paginateCreator?creatorId=${downloadManage.userId}`,
-	).body;
+	)).body;
 	for (let i = 0; i < urls.length; i++) {
 		console.log(`${i + 1}回目`);
 		await addByPostListUrl(downloadManage, urls[i]);
-		await DownloadManage.utils.sleep(10);
 	}
 }
 
@@ -176,15 +345,14 @@ async function getItemsById(downloadManage: DownloadManage) {
  * @param url
  */
 async function addByPostListUrl(downloadManage: DownloadManage, url: string): Promise<void> {
-	const postList = DownloadManage.utils.httpGetAs<{ body: PostInfo[] }>(url).body;
+	const postList = (await fetchApiWithRetry<{ body: PostInfo[] }>(url)).body;
 	console.log(`投稿の数:${postList.length}`);
 	for (const post of postList) {
 		if (downloadManage.isLimitValid()) {
 			if (post.body) {
 				addByPostInfo(downloadManage, post);
 			} else if (!post.isRestricted) {
-				await DownloadManage.utils.sleep(10);
-				addByPostInfo(downloadManage, getPostInfoById(post.id));
+				addByPostInfo(downloadManage, await getPostInfoById(post.id));
 			}
 		} else break;
 	}
@@ -194,10 +362,10 @@ async function addByPostListUrl(downloadManage: DownloadManage, url: string): Pr
  * 投稿IDからpostInfoを得る
  * @param postId 投稿ID
  */
-function getPostInfoById(postId: string): PostInfo | undefined {
-	return DownloadManage.utils.httpGetAs<{ body?: PostInfo }>(
+async function getPostInfoById(postId: string): Promise<PostInfo | undefined> {
+	return (await fetchApiWithRetry<{ body?: PostInfo }>(
 		`https://api.fanbox.cc/post.info?postId=${postId}`,
-	).body;
+	)).body;
 }
 
 /**
@@ -233,7 +401,7 @@ function addByPostInfo(downloadManage: DownloadManage, postInfo: PostInfo | unde
 	let parsedText: string;
 	switch (postInfo.type) {
 		case 'image': {
-			const images = postInfo.body.images.map((it) =>
+			const images = postInfo.body.images.map((it: any) =>
 				postObject.addFile(postName, it.extension, it.originalUrl),
 			);
 			const imageTags = images.map((it) => postObject.getImageLinkTag(it)).join('<br>\n');
@@ -246,7 +414,7 @@ function addByPostInfo(downloadManage: DownloadManage, postInfo: PostInfo | unde
 			break;
 		}
 		case 'file': {
-			const files = postInfo.body.files.map((it) =>
+			const files = postInfo.body.files.map((it: any) =>
 				postObject.addFile(it.name, it.extension, it.url),
 			);
 			const fileTags = files.map((it) => postObject.getAutoAssignedLinkTag(it)).join('<br>\n');
@@ -259,10 +427,10 @@ function addByPostInfo(downloadManage: DownloadManage, postInfo: PostInfo | unde
 			break;
 		}
 		case 'article': {
-			const images = convertImageMap(postInfo.body.imageMap, postInfo.body.blocks).map((it) =>
+			const images = convertImageMap(postInfo.body.imageMap, postInfo.body.blocks).map((it: any) =>
 				postObject.addFile(postName, it.extension, it.originalUrl),
 			);
-			const files = convertFileMap(postInfo.body.fileMap, postInfo.body.blocks).map((it) =>
+			const files = convertFileMap(postInfo.body.fileMap, postInfo.body.blocks).map((it: any) =>
 				postObject.addFile(it.name, it.extension, it.url),
 			);
 			const embeds = convertEmbedMap(postInfo.body.embedMap, postInfo.body.blocks);
@@ -272,7 +440,7 @@ function addByPostInfo(downloadManage: DownloadManage, postInfo: PostInfo | unde
 				cntEmbed = 0,
 				cntUrlEmbed = 0;
 			const body = postInfo.body.blocks
-				.map((it) => {
+				.map((it: any) => {
 					switch (it.type) {
 						case 'p':
 							return `<span>${it.text}</span>`;
@@ -312,8 +480,8 @@ function addByPostInfo(downloadManage: DownloadManage, postInfo: PostInfo | unde
 			postObject.setHtml(header + body);
 			parsedText =
 				postInfo.body.blocks
-					.filter((it): it is TextBlock => it.type === 'p' || it.type === 'header')
-					.map((it) => it.text)
+					.filter((it: any): it is TextBlock => it.type === 'p' || it.type === 'header')
+					.map((it: any) => it.text)
 					.join('\n') + '\n';
 			break;
 		}

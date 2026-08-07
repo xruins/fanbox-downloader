@@ -11,10 +11,13 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "node",
+    "allowSyntheticDefaultImports": true
   },
   "files": [
     "fanbox-downloader.ts",
+    "enhanced-download-helper.ts",
     "types.d.ts"
   ]
 }
